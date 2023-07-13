@@ -28,7 +28,7 @@ const app = express();
 app.use(bodyParser.json());
 app.use(cors({
   origin: [
-    //'http://localhost:4200',
+    'http://localhost:4200',
     'http://dev.rc.fluffpandastore.com/',
     'https://dev.rc.fluffpandastore.com/',
     'http://rc.fluffpandastore.com/',
