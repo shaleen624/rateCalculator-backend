@@ -24,6 +24,7 @@ router.get('/', (req, res) => {
   const responseData = {};
 
   ReferenceDataHistory.find(query, {}, options)
+    //.sort({ createdAt: -1 }) // Sort by createdAt in descending order (latest first)
     .then((data) => {
       responseData.items = data;
 
