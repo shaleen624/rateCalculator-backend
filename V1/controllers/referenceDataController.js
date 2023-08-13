@@ -1,5 +1,6 @@
 const ReferenceData = require('../models/referenceData');
 const ReferenceDataHistory = require('../models/referenceDataHistory');
+const Product = require('../models/product');
 
 const action = {
   CREATE: "Create",
@@ -184,78 +185,10 @@ saveHistory = async (id, action, oldData, updatedData, changes) => {
 
 }
 
-updateProductTotals = async (updatedData) => {
+updateProductTotalsWithAggrPipeline = async (updatedData) => {
   try {
-    /* await Product.aggregate([
-      {
-        $match: {
-          $or: [
-            { 'fabric.type': { $in: updatedData.items } },
-            { 'fiber.type': { $in: updatedData.items } }
-          ]
-        }
-      },
-      {
-        $lookup: {
-          from: 'referenceData', // Assuming your reference data collection name is 'referenceData'
-          let: { fabricType: '$fabric.type', fiberType: '$fiber.type' },
-          pipeline: [
-            {
-              $match: {
-                $expr: {
-                  $or: [
-                    { $eq: ['$item', '$$fabricType'] },
-                    { $eq: ['$item', '$$fiberType'] }
-                  ]
-                }
-              }
-            }
-          ],
-          as: 'materialData'
-        }
-      },
-      {
-        $addFields: {
-          fabricData: {
-            $filter: {
-              input: '$materialData',
-              as: 'data',
-              cond: { $eq: ['$$data.item', '$fabric.type'] }
-            }
-          },
-          fiberData: {
-            $filter: {
-              input: '$materialData',
-              as: 'data',
-              cond: { $eq: ['$$data.item', '$fiber.type'] }
-            }
-          }
-        }
-      },
-      {
-        $project: {
-          fabricRate: { $arrayElemAt: ['$fabricData.rate', 0] },
-          fiberRate: { $arrayElemAt: ['$fiberData.rate', 0] }
-        }
-      },
-      {
-        $set: {
-          'fabric.rate': '$fabricRate',
-          'fabric.total': { $multiply: ['$fabricRate', '$fabric.qty'] },
-          'fiber.rate': '$fiberRate',
-          'fiber.total': { $multiply: ['$fiberRate', '$fiber.qty'] }
-        }
-      },
-      {
-        $set: {
-          totalPrice: { $sum: ['$fabric.total', '$fiber.total'] }
-        }
-      },
-      {
-        $out: 'products' // Replace 'products' with your actual collection name
-      }
-    ]); */
-    rate-calculator.products.aggregate([
+ 
+    db.products.aggregate([
       // Match products that have a matching fiber or fabric nested row
       {
         $match: {
@@ -327,7 +260,7 @@ updateProductTotals = async (updatedData) => {
   }
 }
 
-async function recalculateProductTotal(product) {
+async function recalculateProductTotalAggr(product) {
   try {
     const updatedProduct = await Product.aggregate([
       {
@@ -392,6 +325,71 @@ async function recalculateProductTotal(product) {
     ]);
 
     return updatedProduct[0]; // Return the updated product
+  } catch (error) {
+    console.error('Error recalculating product total:', error);
+    return product; // Return the original product object if there's an error
+  }
+}
+
+async function updateProductTotals(updatedReferenceData) {
+  try {
+    // Find all products that use the updated reference data
+    const productsToUpdate = await Product.find({
+      $or: [
+        { 'fabric.type': updatedReferenceData.item },
+        { 'fiber.type': updatedReferenceData.item }
+      ]
+    });
+    console.log("productsToUpdate", productsToUpdate);
+    // Update the product totals based on the updated reference data
+    for (const product of productsToUpdate) {
+      const updatedProduct = await recalculateProductTotal(product, updatedReferenceData);
+      await Product.findByIdAndUpdate(product._id, updatedProduct);
+    }
+  } catch (error) {
+    console.error('Error updating product totals:', error);
+  }
+}
+
+async function recalculateProductTotal(product, updatedReferenceData) {
+  try {
+    // Calculate the new total for fabric if it exists in the product
+    if (product.fabric) {
+      product.fabric.forEach((fabricRow) => {
+        if (fabricRow.type === updatedReferenceData.item) {
+          fabricRow.rate = updatedReferenceData.rate;
+          fabricRow.total = fabricRow.qty * updatedReferenceData.rate;
+        }
+      });
+    }
+
+    // Calculate the new total for fiber if it exists in the product
+    if (product.fiber) {
+      product.fiber.forEach((fiberRow) => {
+        if (fiberRow.type === updatedReferenceData.item) {
+          fiberRow.rate = updatedReferenceData.rate;
+          fiberRow.total = fiberRow.qty * updatedReferenceData.rate;
+        }
+      });
+    }
+
+    // Recalculate the overall total for the product
+    let overallTotal = 0;
+    if (product.fabric) {
+      product.fabric.forEach((fabricRow) => {
+        overallTotal += fabricRow.total;
+      });
+    }
+    if (product.fiber) {
+      product.fiber.forEach((fiberRow) => {
+        overallTotal += fiberRow.total;
+      });
+    }
+
+    // Update the overall total in the product
+    product.totalPrice = overallTotal;
+
+    return product;
   } catch (error) {
     console.error('Error recalculating product total:', error);
     return product; // Return the original product object if there's an error
