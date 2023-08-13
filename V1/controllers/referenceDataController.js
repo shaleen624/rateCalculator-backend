@@ -20,6 +20,7 @@ exports.getAllReferenceData = async (req, res) => {
 
 // Get a specific reference data by ID
 exports.getReferenceDataById = async (req, res) => {
+  console.log("getReferenceDataById called")
   try {
     const id = req.params.id;
     const referenceData = await ReferenceData.findById(id);
@@ -88,6 +89,7 @@ exports.updateReferenceData = async (req, res) => {
 
     const updatedReferenceData = await referenceData.save();
     debugger
+    await updateProductTotals(updatedReferenceData);
     /*We use the modifiedPaths() method provided by Mongoose to get an array 
      * of modified paths (fields) in the referenceData object.
      * We then use reduce() to create a changes object by iterating over
@@ -131,16 +133,32 @@ exports.deleteReferenceData = async (req, res) => {
 
 // Get all reference data combined by category
 exports.combinedByCategory = async (req, res) => {
+  console.log("Initiating combinedByCategory");
+  let formattedData = [];
   ReferenceData.aggregate([
     {
-      $group: {
-        _id: '$category',
-        data: { $push: { item: '$item', rate: '$rate', unit: '$unit' } },
-      },
-    },
+      '$group': {
+        '_id': '$category',
+        'data': {
+          '$push': {
+            '_id': '$_id',
+            'item': '$item',
+            'rate': '$rate',
+            'unit': '$unit'
+          }
+        }
+      }
+    }
   ])
     .then((combinedData) => {
-      res.json(combinedData);
+      console.log("after aggregate in combined Data", combinedData)
+      combinedData.forEach(ele => {
+        key = ele._id;
+        val = ele.data;
+        formattedData.push({[key]: val})
+      });
+      console.log("after formatting in combined Data", formattedData)
+      res.json(formattedData);
     })
     .catch((error) => {
       console.error('Error while getting combined reference data by category', error);
@@ -165,3 +183,218 @@ saveHistory = async (id, action, oldData, updatedData, changes) => {
   await historyData.save();
 
 }
+
+updateProductTotals = async (updatedData) => {
+  try {
+    /* await Product.aggregate([
+      {
+        $match: {
+          $or: [
+            { 'fabric.type': { $in: updatedData.items } },
+            { 'fiber.type': { $in: updatedData.items } }
+          ]
+        }
+      },
+      {
+        $lookup: {
+          from: 'referenceData', // Assuming your reference data collection name is 'referenceData'
+          let: { fabricType: '$fabric.type', fiberType: '$fiber.type' },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $or: [
+                    { $eq: ['$item', '$$fabricType'] },
+                    { $eq: ['$item', '$$fiberType'] }
+                  ]
+                }
+              }
+            }
+          ],
+          as: 'materialData'
+        }
+      },
+      {
+        $addFields: {
+          fabricData: {
+            $filter: {
+              input: '$materialData',
+              as: 'data',
+              cond: { $eq: ['$$data.item', '$fabric.type'] }
+            }
+          },
+          fiberData: {
+            $filter: {
+              input: '$materialData',
+              as: 'data',
+              cond: { $eq: ['$$data.item', '$fiber.type'] }
+            }
+          }
+        }
+      },
+      {
+        $project: {
+          fabricRate: { $arrayElemAt: ['$fabricData.rate', 0] },
+          fiberRate: { $arrayElemAt: ['$fiberData.rate', 0] }
+        }
+      },
+      {
+        $set: {
+          'fabric.rate': '$fabricRate',
+          'fabric.total': { $multiply: ['$fabricRate', '$fabric.qty'] },
+          'fiber.rate': '$fiberRate',
+          'fiber.total': { $multiply: ['$fiberRate', '$fiber.qty'] }
+        }
+      },
+      {
+        $set: {
+          totalPrice: { $sum: ['$fabric.total', '$fiber.total'] }
+        }
+      },
+      {
+        $out: 'products' // Replace 'products' with your actual collection name
+      }
+    ]); */
+    rate-calculator.products.aggregate([
+      // Match products that have a matching fiber or fabric nested row
+      {
+        $match: {
+          $or: [
+            { "fiber.type": updatedData.item },
+            { "fabric.type": updatedData.item }
+          ]
+        }
+      },
+      // Add fields to match the fiber and fabric nested rows
+      {
+        $addFields: {
+          fiberMatch: {
+            $filter: {
+              input: "$fiber",
+              as: "fiberRow",
+              cond: { $eq: ["$$fiberRow.type", updatedData.item] }
+            }
+          },
+          fabricMatch: {
+            $filter: {
+              input: "$fabric",
+              as: "fabricRow",
+              cond: { $eq: ["$$fabricRow.type", updatedData.item] }
+            }
+          }
+        }
+      },
+      // Update fiber rows with new rate and total
+      {
+        $addFields: {
+          "fiber.$[elem].rate": updatedData.rate,
+          "fiber.$[elem].total": { $multiply: ["$fiberMatch.qty", updatedData.rate] }
+        },
+        arrayFilters: [
+          { "elem.type": updatedData.item }
+        ]
+      },
+      // Update fabric rows with new rate and total
+      {
+        $addFields: {
+          "fabric.$[elem].rate": updatedData.rate,
+          "fabric.$[elem].total": { $multiply: ["$fabricMatch.qty", updatedData.rate] }
+        },
+        arrayFilters: [
+          { "elem.type": updatedData.item }
+        ]
+      },
+      // Recalculate product total
+      {
+        $addFields: {
+          "totalPrice": {
+            $sum: {
+              $map: {
+                input: "$fiber",
+                as: "fiberRow",
+                in: "$$fiberRow.total"
+              }
+            }
+          }
+        }
+      },
+      // Other aggregation stages if any
+    ]);
+    
+    console.log('Product totals updated successfully.');
+  } catch (error) {
+    console.error('Error updating product totals:', error);
+  }
+}
+
+async function recalculateProductTotal(product) {
+  try {
+    const updatedProduct = await Product.aggregate([
+      {
+        $match: { _id: product._id } // Match the specific product
+      },
+      {
+        $lookup: {
+          from: 'referenceData', // Assuming your reference data collection name is 'referenceData'
+          let: { fabricType: '$fabric.type', fiberType: '$fiber.type' },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $or: [
+                    { $eq: ['$item', '$$fabricType'] },
+                    { $eq: ['$item', '$$fiberType'] }
+                  ]
+                }
+              }
+            }
+          ],
+          as: 'materialData'
+        }
+      },
+      {
+        $addFields: {
+          fabricData: {
+            $filter: {
+              input: '$materialData',
+              as: 'data',
+              cond: { $eq: ['$$data.item', '$fabric.type'] }
+            }
+          },
+          fiberData: {
+            $filter: {
+              input: '$materialData',
+              as: 'data',
+              cond: { $eq: ['$$data.item', '$fiber.type'] }
+            }
+          }
+        }
+      },
+      {
+        $project: {
+          fabricRate: { $arrayElemAt: ['$fabricData.rate', 0] },
+          fiberRate: { $arrayElemAt: ['$fiberData.rate', 0] }
+        }
+      },
+      {
+        $set: {
+          'fabric.rate': '$fabricRate',
+          'fabric.total': { $multiply: ['$fabricRate', '$fabric.qty'] },
+          'fiber.rate': '$fiberRate',
+          'fiber.total': { $multiply: ['$fiberRate', '$fiber.qty'] }
+        }
+      },
+      {
+        $set: {
+          totalPrice: { $sum: ['$fabric.total', '$fiber.total'] }
+        }
+      }
+    ]);
+
+    return updatedProduct[0]; // Return the updated product
+  } catch (error) {
+    console.error('Error recalculating product total:', error);
+    return product; // Return the original product object if there's an error
+  }
+}
+

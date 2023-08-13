@@ -8,11 +8,11 @@ router.get('/', referenceDataController.getAllReferenceData);
 // Search reference data by item
 router.get('/search', referenceDataController.searchReferenceData);
 
-// Get a specific reference data by ID
-router.get('/:id', referenceDataController.getReferenceDataById);
-
 // Get a all reference data by category.
 router.get('/combined-by-category', referenceDataController.combinedByCategory);
+
+// Get a specific reference data by ID
+router.get('/:id', referenceDataController.getReferenceDataById);
 
 // Create new reference data
 router.post('/', referenceDataController.createReferenceData);
