@@ -353,6 +353,25 @@ async function updateProductTotals(updatedReferenceData) {
 
 async function recalculateProductTotal(product, updatedReferenceData) {
   try {
+
+    let nonNestedTotal = 0;
+
+    // Loop through the fields of the product object
+    for (const field in product._doc) {
+      if (
+        field !== '_id' &&
+        field !== 'fabric' &&
+        field !== 'fiber' &&
+        field !== 'totalPrice' &&
+        field !== 'name' &&
+        field !== 'size' &&
+        field !== 'category' &&
+        field !== '__v'
+      ) {
+        nonNestedTotal += parseFloat(product[field]) || 0; // Convert to number, default to 0 if conversion fails
+      }
+    }
+    console.log("nonNestedTotal", nonNestedTotal)
     // Calculate the new total for fabric if it exists in the product
     if (product.fabric) {
       product.fabric.forEach((fabricRow) => {
@@ -385,10 +404,10 @@ async function recalculateProductTotal(product, updatedReferenceData) {
         overallTotal += fiberRow.total;
       });
     }
-
+    console.log("overallTotal", overallTotal)
     // Update the overall total in the product
-    product.totalPrice = overallTotal;
-
+    product.totalPrice = overallTotal + nonNestedTotal;
+    console.log("product.totalPrice", product.totalPrice)
     return product;
   } catch (error) {
     console.error('Error recalculating product total:', error);
